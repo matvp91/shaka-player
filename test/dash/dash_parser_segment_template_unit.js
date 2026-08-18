@@ -966,20 +966,19 @@ describe('DashParser SegmentTemplate', () => {
       });
 
       it('shifts timeline on presentationTimeOffset change', async () => {
+        // Entries store PTO-subtracted times: unscaledStart == t - PTO
+        // (see MpdUtils.createTimeline).  Cached with PTO 0, these entries
+        // represent media times t = 0..1800000 (presentation [0, 20]).
         const info = makeTemplateInfo(makeRanges(0, 2.0, 10));
         info.unscaledPresentationTimeOffset = 0;
         const index = await makeTimelineSegmentIndex(info, false);
 
-        // The initial template should contain a timeline of 5
-        // initial ranges.
         expect(index.getTimeline().length).toBe(10);
 
-        // The same 5 ranges are now shifted by PTO and not by
-        // their internal timestamps.
-        // cached: |--|--|--|--|--|
-        // next:      |--|--|--|--|--|
-        //         shift is 1x the timescale = 1 range.
-        //         the last range shall be added to the cache.
+        // Same-looking ranges declared with PTO = 90000 (1s) represent
+        // t = 90000..1890000: one second of newer media.  They get rebased
+        // into the cached PTO frame; only entries extending past the cached
+        // timeline end (media t > 1800000) are appended.
         const nextInfo = makeTemplateInfo(makeRanges(0, 2.0, 10));
         nextInfo.unscaledPresentationTimeOffset = 90000;
         index.appendTemplateInfo(nextInfo, 0, 30);
@@ -987,13 +986,49 @@ describe('DashParser SegmentTemplate', () => {
         const timeline = index.getTimeline();
         expect(timeline.length).toBe(11);
 
-        // The last segment is the new one, based on the cached
-        // presentationTimeOffset.
+        // The appended entry (t = 1710000) sits at its own media time under
+        // the cached PTO, [19, 21] -- not flush after the cached end.
+        // Invariant: start === unscaledStart / timescale, else declared
+        // times and the media behind the $Time$ URL diverge.
         expect(timeline[timeline.length - 1]).toEqual({
-          start: 20,
+          start: 19,
           unscaledStart: 1710000,
-          end: 22,
+          end: 21,
           unscaledEnd: 1890000,
+        });
+      });
+
+      // MediaTailor rewrites ad periods in place: same t values, growing
+      // PTO on each refresh.  The re-parsed entries describe the same
+      // segments, so appending must not duplicate them.
+      // See https://github.com/shaka-project/shaka-player/issues/8351
+      it('does not duplicate segments when only the PTO changes', async () => {
+        const info = makeTemplateInfo(makeRanges(0, 2.0, 10));
+        info.unscaledPresentationTimeOffset = 0;
+        const index = await makeTimelineSegmentIndex(info, false);
+
+        expect(index.getTimeline().length).toBe(10);
+
+        // Same t values as cached (t = unscaledStart + PTO = 0..1800000),
+        // parsed with PTO = 1s.
+        const nextInfo = makeTemplateInfo(makeRanges(-1, 2.0, 10));
+        nextInfo.unscaledPresentationTimeOffset = 90000;
+        index.appendTemplateInfo(nextInfo, 0, 21);
+
+        // No new entries: the incoming timeline describes the same segments.
+        const timeline = index.getTimeline();
+        expect(timeline.length).toBe(10);
+        expect(timeline[0]).toEqual({
+          start: 0,
+          unscaledStart: 0,
+          end: 2,
+          unscaledEnd: 180000,
+        });
+        expect(timeline[timeline.length - 1]).toEqual({
+          start: 18,
+          unscaledStart: 1620000,
+          end: 20,
+          unscaledEnd: 1800000,
         });
       });
     });
