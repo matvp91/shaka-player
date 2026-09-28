@@ -1,0 +1,13 @@
+{
+  "name": "shaka-player-ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "format": "biome check --write --unsafe ."
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.4",
+    "typescript": "6"
+  }
+}
